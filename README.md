@@ -12,6 +12,11 @@
 * female adapter for 5mm/2.1mm barrel jack
 * headers and stuffs ...
 
-## Misc
+## Attributions
 
-The Kicad modules for Teensy-LC was adapted from the code at https://github.com/hedrickbt/teensy_breakout by Brooke Hedrick released under MIT License.
+* The Kicad modules for Teensy-LC was adapted from the code at https://github.com/hedrickbt/teensy_breakout by Brooke Hedrick released under MIT License.
+* `resources/max14870.wrl` is derived from [MAX14870 Single Brushed DC Motor Driver Carrier model by Pololu](https://www.pololu.com/file/0J1338/max14870-single-brushed-dc-motor-driver-carrier.step), license unclear ...
+
+## License
+
+The content of this project itself (excluding attributed parts) is licensed under the Creative Commons Attribution 3.0 license, and the source code in the `motor_pid` folder is licensed under the MIT license.
