@@ -1,31 +1,20 @@
-//TODO try with a Teensy 3.5 and a Teensy LC
-
 //dealing with the input
 //  type of control:
 //      set speed
 //      [optional] set position
 //  USB communication / Serial: https://www.pjrc.com/teensy/td_serial.html
-//  speed in turn per second
 
 // voltage divider with 39k and 68k
 
 //implement a PID controller (periodic loop)
-//  TODO will run within interrupt so it better be fast!
-//    x = read from encoder
-//    if x != 0
-//        set encoder to 0
-//        speed = x / dt
-//        dt = 1
-//    else
-//        dt += 1
-//    compute PID value
-//    compute duty cycle
-//    set PWM
+//  it runs within interrupt so it better be fast!
 //  sources:
 //    http://controlsystemslab.com/discrete-time-pid-controller-implementation/
 //    http://brettbeauregard.com/blog/2011/04/improving-the-beginners-pid-introduction/
 //    https://github.com/br3ttb/Arduino-PID-Library/
 //    http://playground.arduino.cc/Code/PIDLibrary
+
+//TODO when switching direction, should we stay in break mode for a little while ?
 
 //motor encoder
 //  counts
@@ -41,26 +30,19 @@
 //controling the motor driver:
 //  motor driver freq up to 50 kHz: https://www.pololu.com/file/download/MAX14870.pdf?file_id=0J885
 //  https://www.pjrc.com/teensy/td_pulse.html
-//  pins:
-//      Teensy 3.5  FTM0    5, 6, 9, 10, 20, 21, 22, 23     488.28 Hz
-//                  FTM1    3, 4                            488.28 Hz
-//                  FTM2    29, 30                          488.28 Hz
-//                  FTM3    2, 7, 8, 14, 35, 36, 37, 38     488.28 Hz
-//      Teensy LC   FTM0    6, 9, 10, 20, 22, 23            488.28 Hz
+//  Teensy LC pins: FTM0    6, 9, 10, 20, 22, 23            488.28 Hz
 //                  FTM1    16, 17                          488.28 Hz
 //                  FTM2    3, 4                            488.28 Hz
 //  set the frequency: analogWriteFrequency(4, 375000); // Teensy pin 3 also changes to 375 kHz
 //  set the number of bits for analogWrite: analogWriteResolution(12);  // analogWrite value 0 to 4095, or 4096 for high
 //  frequency and resolution goes together:
-//    3.5: 11 bits, 29'296.875 Hz
 //    LC: 10 bits, 46'875 Hz
 
 // #define ENCODER_OPTIMIZE_INTERRUPTS
 #include <Encoder.h>
 #include <IntervalTimer.h>
 
-// Teensy LC or Teensy 3.5
-#define TLC 1
+// Code for a Teensy LC
 
 // TODO should this be a power of 2 to make the computation is simpler?
 #define PID_USEC 2000
@@ -69,38 +51,42 @@
 #define CNT_PER_REV 979.62 //20.4:1 gearbox
 //#define CNT_PER_REV 2248.86 //46.85:1 gearbox
 
-#ifdef TLC
 const int LED_PIN = 13;
 const int ENCODER_PIN_1 = 5;
 const int ENCODER_PIN_2 = 6;
 const int DIR_PIN = 3;
 const int PWM_PIN = 4;
 const int PWM_BITS = 10;
-#define PWM_FREQ 46875
-#else
-const int LED_PIN = 13;
-const int ENCODER_PIN_1 = 5;
-const int ENCODER_PIN_2 = 6;
-const int DIR_PIN = 3;
-const int PWM_PIN = 4;
-const int PWM_BITS = 11;
-#define PWM_FREQ 29296.875
-#endif
+const int PWM_FREQ = 46875;
 
 const int MAX_PWM = 1 << PWM_BITS;
+
+const char EOL = '\n';
+
+const bool SPEED = true;
+const bool POSITION = false;
+
+const int KP_SPEED = 5;
+const int KI_SPEED = 500;
+const int KD_SPEED = 10;
+
+const int KP_POSITION = 5;
+const int KI_POSITION = 3;
+const int KD_POSITION = 100;
 
 Encoder motor_encoder(ENCODER_PIN_1, ENCODER_PIN_2); 
 
 IntervalTimer pid_tick;
 
 // PID parameters, volatile because the UI code might change it
-volatile int KP = 5;
-volatile int KI = 500;
+volatile int KP = 0;
+volatile int KI = 0;
 volatile int KD = 0;
 
 //PID state variable
-volatile float target_speed = 0; //written by `loop`, read by `pid`
-volatile float current_speed = 0; //written by `pid`, read by `loop`
+volatile bool mode = SPEED;
+volatile float target = 0; //written by `loop`, read by `pid`
+volatile float current = 0; //written by `pid`, read by `loop`
 float i = 0;
 // keep the previous output to limit the jerk
 int pid_output = 0;
@@ -109,21 +95,20 @@ unsigned int loop_count = 0;
 volatile unsigned int w1 = 0;
 volatile unsigned int w2 = 0;
 
-//TODO tricks for implementing a PID
-// * limit the proportional term when changing the set point (limit jerk ?)
-// * low pass filter on the derivative term to limit the influence of noise
-// * ...
-
-//TODO when switching direction, should we stay in break mode for a little while ?
-
+// Amortize the number of counts over a window.
+// This increases the precision at low speed and implements a low pass filter.
+// But is also adds some lag
 const int window = 16;
 int counts[window];
 int count = 0;
 int idx = 0;
 
+//TODO min/max range for the speed
+
 void pid_loop(void) {
     loop_count += 1;
     w1 = loop_count; // start writing stuff
+    // read the motor state
     int ticks = motor_encoder.read();
     motor_encoder.write(0);
     count -= counts[idx];
@@ -133,22 +118,29 @@ void pid_loop(void) {
     if (idx >= window) {
       idx = 0;
     }
-    //
-    float new_speed = ((float)count) / ((float)window);
-    float p0 = target_speed - new_speed;
+    // update the PID state
+    float new_state;
+    if (mode == SPEED) {
+        new_state = ((float)count) / ((float)window);
+    } else {
+        new_state = current + ticks;
+    }
+    float p0 = target - new_state;
     float p = KP * p0;
-    float d = KD * (current_speed - new_speed); // TODO low pass filter
+    float d = KD * (current - new_state);
     int pd = (int)(p + d);
     pd = max(-MAX_PWM, pd);
     pd = min( MAX_PWM, pd);
-    // do not increment the integral term when the PID is outside the range of output
+    i = i + KI * p0 * PID_USEC / 1000000;
+    // clamp the integral term when the PID is outside the range of output
     if (pd >= 0) {
-        i = min( MAX_PWM -pd, i + KI * p0 * PID_USEC / 1000000);
+        i = min( MAX_PWM -pd, i);
     } else {
-        i = max(-MAX_PWM -pd, i + KI * p0 * PID_USEC / 1000000);
+        i = max(-MAX_PWM -pd, i);
     }
     int pid = pd + (int)i;
     //TODO limit the jerk
+    // set the output
     if (pid >= 0) {
         if (pid_output < 0) {
             digitalWrite(DIR_PIN, HIGH);
@@ -160,8 +152,8 @@ void pid_loop(void) {
         }
         analogWrite(PWM_PIN, -pid);
     }
-    //
-    current_speed = new_speed;
+    // save the state
+    current = new_state;
     pid_output = pid;
     w2 = loop_count; // done writing stuff
 }
@@ -171,13 +163,18 @@ void output() {
     int _w1 = w1;
     int _pid_output = pid_output;
     int _i = i;
-    float _current_speed = current_speed;
+    float _current = current;
     int _w2 = w2;
     if (_w1 == _w2) {
-        Serial.print("target_speed = ");
-        Serial.print(target_speed);
-        Serial.print(", current_speed = ");
-        Serial.print(_current_speed);
+        if (mode == SPEED) {
+            Serial.print("speed, ");
+        } else {
+            Serial.print("position, ");
+        }
+        Serial.print("target = ");
+        Serial.print(target);
+        Serial.print(", current = ");
+        Serial.print(_current);
         Serial.print(", output = ");
         Serial.print(_pid_output);
         Serial.print(", i = ");
@@ -187,39 +184,84 @@ void output() {
     } //else: we were interrupted, skip
 }
 
-// Arduino functions
-
-void setup() {
+void set_mode(bool m) {
+    // make sure the PID is stopped
+    pid_tick.end();
+    // stop the motor
+    digitalWrite(DIR_PIN, HIGH);
+    analogWrite(PWM_PIN, 0);
+    // clean the values
+    target = 0;
+    current = 0;
+    mode = m;
     for (int i = 0; i < window; i++) {
         counts[i] = 0;
     }
-  
-    // pinMode(ENCODER_PIN_1, INPUT);
-    // pinMode(ENCODER_PIN_2, INPUT);
+    count = 0;
+    idx = 0;
+    // set the new coefficients
+    if (m == SPEED) {
+        KP = KP_SPEED;
+        KI = KI_SPEED;
+        KD = KD_SPEED;
+    } else {
+        KP = KP_POSITION;
+        KI = KI_POSITION;
+        KD = KD_POSITION;
+    }
+    // (re)start the PID
+    pid_tick.begin(pid_loop, PID_USEC);
+}
+
+void read_input() {
+    digitalWrite(LED_PIN, HIGH);
+    // read the input: change mode, speed in turn per second, or position in turn
+    String input = Serial.readStringUntil(EOL);
+    //Serial.print("cmd = ");
+    //Serial.println(input);
+    if (input.length() > 0) {
+        if (input[0] == 'p' || input[0] == 'P') {
+            set_mode(POSITION);
+        } else if (input[0] == 's' || input[0] == 'S') {
+            set_mode(SPEED);
+        } else {
+            //float input = Serial.parseFloat();
+            float f = input.toFloat();
+            if (mode == SPEED) {
+                // convert the speed to count per PID loop
+                target = f * CNT_PER_REV * PID_USEC / 1000000;
+            } else {
+                // convert the position to a count
+                // round to avoid oscillations
+                target = (int)(f * CNT_PER_REV);
+            }
+        }
+    }
+    // flush the remaining input
+    while (Serial.available() > 0) {
+        Serial.read();
+    }
+    digitalWrite(LED_PIN, LOW);
+}
+
+// Arduino functions
+
+void setup() {
     pinMode(DIR_PIN, OUTPUT);
     pinMode(PWM_PIN, OUTPUT);
     pinMode(LED_PIN, OUTPUT);
-
-    Serial.begin(9600);
-
+    
     analogWriteFrequency(PWM_PIN, PWM_FREQ);
     analogWriteResolution(PWM_BITS);
-    digitalWrite(DIR_PIN, HIGH);
-    analogWrite(PWM_PIN, 0);
-    pid_tick.begin(pid_loop, PID_USEC);
+    
+    Serial.begin(9600);
+
+    set_mode(SPEED); //set_mode also start the PID loop
 }
 
 void loop() {
     if (Serial.available()) {
-        digitalWrite(LED_PIN, HIGH);
-        float input = Serial.parseFloat();
-        Serial.print("cmd = ");
-        Serial.println(input);
-        target_speed = input * CNT_PER_REV * PID_USEC / 1000000;
-        while (Serial.available() > 0) {
-            Serial.read();
-        }
-        digitalWrite(LED_PIN, LOW);
+        read_input();
     }
     delay(500);
     output();
