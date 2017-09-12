@@ -108,8 +108,8 @@ int idx = 0;
 void pid_loop(void) {
     loop_count += 1;
     w1 = loop_count; // start writing stuff
-    // read the motor state
-    int ticks = motor_encoder.read();
+    // read the motor state (wired backward ...)
+    int ticks = -motor_encoder.read();
     motor_encoder.write(0);
     count -= counts[idx];
     counts[idx] = ticks;
