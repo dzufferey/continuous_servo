@@ -45,7 +45,7 @@
 // Code for a Teensy LC
 
 // TODO should this be a power of 2 to make the computation is simpler?
-#define PID_USEC 2000
+#define PID_USEC 1000
 
 // Motor parameter
 #define CNT_PER_REV 979.62 //20.4:1 gearbox
@@ -66,13 +66,13 @@ const char EOL = '\n';
 const bool SPEED = true;
 const bool POSITION = false;
 
-const int KP_SPEED = 5;
-const int KI_SPEED = 500;
-const int KD_SPEED = 10;
+const int KP_SPEED = 20;
+const int KI_SPEED = 2000;
+const int KD_SPEED = 100;
 
-const int KP_POSITION = 5;
-const int KI_POSITION = 3;
-const int KD_POSITION = 100;
+const int KP_POSITION = 56;
+const int KI_POSITION = 500;
+const int KD_POSITION = 500;
 
 Encoder motor_encoder(ENCODER_PIN_1, ENCODER_PIN_2); 
 
@@ -98,7 +98,7 @@ volatile unsigned int w2 = 0;
 // Amortize the number of counts over a window.
 // This increases the precision at low speed and implements a low pass filter.
 // But is also adds some lag
-const int window = 16;
+const int window = 24;
 int counts[window];
 int count = 0;
 int idx = 0;
@@ -263,6 +263,6 @@ void loop() {
     if (Serial.available()) {
         read_input();
     }
-    delay(500);
+    delay(100);
     output();
 }
