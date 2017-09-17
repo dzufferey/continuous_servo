@@ -3,7 +3,7 @@
 ## BoM
 
 * [Teensy LC](https://www.pjrc.com/teensy/teensyLC.html)
-* Electric motor with quadrature encoder ([pololu metal gearbox motor 25D with 48 CPR encoder](https://www.pololu.com/product/3239))
+* Electric motor with quadrature encoder ([pololu metal gearbox motor 25D with 48 CPR encoder](https://www.pololu.com/product/3239)) with mounting bracket ([Pololu 25D mm Metal Gearmotor Bracket Pair](https://www.pololu.com/product/2676))
 * [MAX14870 Single Brushed DC Motor Driver Carrier](https://www.pololu.com/product/2961)
 * Voltage regulator that output 5V ([Pololu Adjustable Step-Up/Step-Down Voltage Regulator S7V8A](https://www.pololu.com/product/2118))
 * Through-hole resistors: 2 x 39kΩ, 2 x 68kΩ
